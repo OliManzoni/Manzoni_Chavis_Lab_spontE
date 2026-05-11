@@ -6,7 +6,6 @@ import tempfile
 import os
 import pandas as pd
 
-# Tentative d'import de pyabf
 try:
     import pyabf
 except ImportError:
@@ -113,11 +112,11 @@ T = {
         "tab_theory": "📚 Théorie Biophysique & Maths",
         "theory_text": THEORY_FR,
         "sb_preproc": "1. Prétraitement (Baseline & Denoising)",
-        "baseline_method": "Mode de correction de Ligne de Base",
-        "dyn_detrend": "Detrending Dynamique (Médiane Glissante)",
+        "baseline_method": "Mode de Ligne de Base",
+        "dyn_detrend": "Detrending Dynamique (Médiane)",
         "stat_detrend": "Médiane Globale Statique",
         "cutoff": "Coupure Bessel (Hz)",
-        "nyquist_warn": "⚠️ Limité par la fréquence de Nyquist",
+        "nyquist_warn": "⚠️ Limité par Nyquist",
         "sb_detec": "2. Détection Multi-Scale",
         "threshold": "Seuil Z-Score",
         "sb_kinetics": "3. Cinétique & Filtres",
@@ -132,7 +131,7 @@ T = {
         "x_end": "Fin (s)",
         "uploader": "Charger .abf",
         "viz_header": "Visualisation & Détection",
-        "export_header": "📥 Exportation des Résultats",
+        "export_header": "📥 Exportation",
         "btn_events": "📁 Télécharger Événements Individuels",
         "btn_summary": "📊 Télécharger Analyse Population",
         "col_time": "Temps (s)",
@@ -144,14 +143,11 @@ T = {
     }
 }[lang]
 
-# --- LIEN VERS LE README & DOI ---
 st.sidebar.markdown(f"**[{T['readme_link']}](https://github.com/OliManzoni/Manzoni_Chavis_Lab_spontE/blob/main/README.md)**")
 st.sidebar.markdown(f"### {T['cite_header']}")
 st.sidebar.markdown("[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19915015.svg)](https://doi.org/10.5281/zenodo.19915015)")
-st.sidebar.caption(f"{T['cite_text']}\n*Manzoni, O. J. (2026). Manzoni_Chavis_Lab_spontE. Zenodo. https://doi.org/10.5281/zenodo.19915015*")
 st.sidebar.divider()
 
-# --- EN-TÊTE INSTITUTIONNEL ---
 col_l, col_r = st.columns([2, 5]) 
 with col_l:
     try: st.image("logo_chavis_final.png", width=360) 
@@ -161,24 +157,15 @@ with col_r:
 
 st.divider()
 
-# --- CRÉATION DES ONGLETS ---
 tab_analysis, tab_theory = st.tabs([T["tab_analysis"], T["tab_theory"]])
 
-# ==========================================
-# ONGLET 2 : THEORIE BIOPHYSIQUE
-# ==========================================
 with tab_theory:
     st.markdown(T["theory_text"])
 
-# ==========================================
-# ONGLET 1 : PIPELINE D'ANALYSE
-# ==========================================
 with tab_analysis:
-    # --- FONCTIONS MATHÉMATIQUES ---
     def apply_dynamic_detrending(data, fs, window_ms=500):
-        """Soustrait la dérive lente en utilisant un filtre médian glissant."""
         kernel_size = int((window_ms / 1000.0) * fs)
-        if kernel_size % 2 == 0: kernel_size += 1 # Le kernel doit être impair
+        if kernel_size % 2 == 0: kernel_size += 1
         baseline = ndimage.median_filter(data, size=kernel_size)
         return data - baseline
 
@@ -202,7 +189,6 @@ with tab_analysis:
             return t90 - t10
         except: return 0
 
-    # --- SIDEBAR & FILTRES ---
     st.sidebar.header(T["sb_preproc"])
     baseline_mode = st.sidebar.radio(T["baseline_method"], [T["dyn_detrend"], T["stat_detrend"]], index=0)
     use_bessel = st.sidebar.checkbox("Bessel Filter", value=True)
@@ -214,23 +200,19 @@ with tab_analysis:
     st.sidebar.header(T["sb_kinetics"])
     use_decay_filter = st.sidebar.checkbox("Filter Decay", value=True)
     decay_limit = st.sidebar.number_input(T["decay_thresh"], value=3.0, step=0.5)
-
     use_rise_filter = st.sidebar.checkbox("Filter Rise Time", value=True)
     rise_limit = st.sidebar.number_input(T["rise_thresh"], value=0.5, step=0.1)
-
     use_amp_filter = st.sidebar.checkbox(T["amp_filter"], value=True)
     calc_on_raw = st.sidebar.checkbox(T["calc_raw"], value=False)
 
     st.sidebar.header(T["sb_viz"])
     y_zoom = st.sidebar.slider(T["zoom_y"], -300, 100, (-80, 20))
-    
     st.sidebar.markdown(f"**{T['zoom_x']}**")
     col_x1, col_x2 = st.sidebar.columns(2)
     x_start = col_x1.number_input(T["x_start"], value=10.0, step=0.5)
     x_end = col_x2.number_input(T["x_end"], value=11.0, step=0.5)
     x_zoom = (x_start, x_end)
 
-    # --- LOGIQUE PRINCIPALE ---
     file = st.file_uploader(T["uploader"], type=["abf"])
 
     if file:
@@ -248,9 +230,8 @@ with tab_analysis:
             if cutoff >= nyquist_limit:
                 st.sidebar.warning(T["nyquist_warn"])
 
-            # POINT CLÉ : Application de la correction de Ligne de Base
             if baseline_mode == T["dyn_detrend"]:
-                with st.spinner("Application du Detrending Dynamique (Rolling Median)..."):
+                with st.spinner("Detrending (Rolling Median)..."):
                     raw_data = apply_dynamic_detrending(abf.sweepY, fs, window_ms=500)
             else:
                 raw_data = abf.sweepY - np.median(abf.sweepY)
@@ -258,7 +239,10 @@ with tab_analysis:
             f_data = apply_bessel_filter(raw_data, fs, cutoff) if use_bessel else raw_data
             
             best_corr = np.zeros_like(f_data)
+            
+            # CORRECTION : Déclaration de la variable manquante
             default_decays = [2.0, 5.0, 10.0, 15.0]
+            
             for d in default_decays:
                 t_tmpl = np.arange(0, 20, dt)
                 tmpl = (np.exp(-t_tmpl/d) - np.exp(-t_tmpl/0.5))
@@ -275,7 +259,6 @@ with tab_analysis:
                 start, end = p - int(0.003*fs), p + int(0.015*fs)
                 if start < 0 or end >= len(k_trace): continue
                 
-                # La soustraction locale reste pour peaufiner l'intégration
                 l_base = np.mean(k_trace[p-int(0.005*fs):p-int(0.002*fs)])
                 seg_inv = -(k_trace[start:end] - l_base)
                 
@@ -294,7 +277,6 @@ with tab_analysis:
                     ev['iei'] = (times[p] - times[peaks[i-1]])*1000 if i>0 else np.nan
                     valid_ev.append(ev)
 
-            # --- AFFICHAGE GRAPHIQUE ---
             st.subheader(T["viz_header"])
             fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios':[2,1]})
             ax1.plot(times, f_data, color='black', lw=0.4)
@@ -305,7 +287,6 @@ with tab_analysis:
             ax2.axhline(threshold, color='red', ls='--')
             st.pyplot(fig1)
 
-            # --- EXPORT & DISTRIBUTIONS ---
             if valid_ev:
                 df = pd.DataFrame(valid_ev)
                 st.divider()
@@ -320,7 +301,6 @@ with tab_analysis:
                 col_exp1, col_exp2 = st.columns(2)
                 col_exp1.download_button(label=T["btn_events"], data=df_export.to_csv(index=False).encode('utf-8'), file_name='sEPSC_events.csv', mime='text/csv')
                 
-                # Export de la Population
                 n_bins = 25
                 counts_amp, bins_amp = np.histogram(df['amp'], bins=n_bins)
                 counts_rise, bins_rise = np.histogram(df['rise'], bins=n_bins)
