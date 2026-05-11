@@ -1,11 +1,16 @@
 import streamlit as st
-import pyabf
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import signal, optimize, integrate
+from scipy import signal, optimize, integrate, ndimage
 import tempfile
 import os
 import pandas as pd
+
+# Tentative d'import de pyabf
+try:
+    import pyabf
+except ImportError:
+    st.error("Le module pyabf n'est pas installé. Exécutez : pip install pyabf")
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="sEPSC Pipeline", layout="wide")
@@ -20,60 +25,47 @@ lang = st.sidebar.selectbox("Language / Langue", ["English", "Français"])
 THEORY_EN = """
 ### 🔬 Biophysical and Mathematical Principles
 
-#### 1. Bessel Filter (Signal Denoising)
-Unlike Butterworth or Chebyshev filters, which can introduce artifactual oscillations ("ringing") on fast transients, the **Bessel filter** is optimized to have a maximally flat group delay (linear phase response). 
-Biophysically, this means all frequencies are delayed equally, preserving the exact waveform of the sEPSC. This is an absolute requirement for accurate **Rise Time** measurements.
+#### 1. Dynamic Detrending & Bessel Filter (Preprocessing)
+**Dynamic Detrending:** Slow fluctuations in the holding current can shift the local baseline and bias area measurements. The algorithm applies a **sliding median filter** (e.g., 500 ms window) to track and subtract these slow drifts without distorting fast synaptic transients, locking the global baseline strictly to 0 pA.
+**Bessel Filter:** Unlike Butterworth filters which introduce "ringing" on fast transients, the **Bessel filter** has a strictly linear phase response. All frequencies are delayed equally, preserving the exact waveform and **Rise Time** of the sEPSC.
 
 #### 2. Multi-Scale Template Matching
-Synaptic events originating from distal dendrites undergo **passive dendritic filtering** before reaching the somatic patch pipette, resulting in slower, broader waveforms compared to proximal synapses. 
-Instead of a single template, the algorithm convolves the trace with multiple bi-exponential templates having varying decay constants ($\\tau = 2, 5, 10, 15$ ms). A sliding cross-correlation maximizes the detection of heterogeneous events buried in high RMS noise.
+Synaptic events originating from distal dendrites undergo **passive dendritic filtering**, resulting in slower, broader waveforms. 
+Instead of a single template, the algorithm convolves the trace with multiple bi-exponential templates having varying decay constants ($\tau = 2, 5, 10, 15$ ms). A sliding cross-correlation maximizes the detection of heterogeneous events buried in high RMS noise.
 
 #### 3. Kinetics: Rise Time 10-90%
 The 10-90% rise time is calculated to avoid the noise present at the absolute peak and the baseline drift at the onset. The algorithm uses **linear interpolation** between the digitized sampling points to pinpoint the exact millisecond the current crosses these thresholds, bypassing the limits of the sampling frequency.
 
 #### 4. Decay Estimation via Charge Integration
-Performing non-linear curve fitting (Levenberg-Marquardt) on hundreds of noisy, spontaneous events is computationally heavy and often fails. 
-Instead, the algorithm uses a robust mathematical approximation. Assuming a simple exponential decay for an AMPA current:
-$$ I(t) = I_{max} e^{-t/\\tau} $$
-The total charge (Area) is the integral of this current:
+Performing non-linear curve fitting on hundreds of noisy spontaneous events is computationally heavy. Assuming a simple exponential decay for an AMPA current ($I(t) = I_{max} e^{-t/\\tau}$), the total charge (Area) is the integral:
 $$ \\text{Area} = \\int_{0}^{\\infty} I_{max} e^{-t/\\tau} dt = I_{max} \\cdot \\tau $$
-Therefore, the decay constant $\\tau$ can be rapidly and robustly estimated without curve-fitting:
+Therefore, the decay constant $\\tau$ is rapidly and robustly estimated:
 $$ \\tau \\approx \\frac{\\text{Area}}{\\text{Amplitude}} $$
-
-#### 5. AMPA vs NMDA Discrimination
-By recording at a holding potential of **-70 mV**, the extracellular $Mg^{2+}$ block prevents most NMDA receptor openings. Any residual slow currents (NMDA or heavily filtered dendritic events) are eliminated using the automated **Rise Time (< 0.5 ms)** and **Decay (< 3.0 ms)** kinetic filters.
 """
 
 THEORY_FR = """
 ### 🔬 Principes Biophysiques et Mathématiques
 
-#### 1. Le Filtre de Bessel (Denoising)
-Contrairement aux filtres de Butterworth ou Chebyshev qui peuvent introduire des oscillations artificielles ("ringing") sur les transitoires rapides, le **filtre de Bessel** possède un délai de groupe maximalement plat (réponse en phase linéaire). 
-Biophysiquement, cela signifie que toutes les fréquences sont retardées de manière égale, préservant la forme d'onde exacte du sEPSC. C'est une condition absolue pour mesurer le **Rise Time** de manière rigoureuse.
+#### 1. Detrending Dynamique & Filtre de Bessel (Prétraitement)
+**Detrending Dynamique :** Les fluctuations lentes du courant de maintien peuvent fausser la ligne de base. L'algorithme applique un **filtre médian glissant** (ex: fenêtre de 500 ms) pour suivre et soustraire ces dérives sans affecter les transitoires rapides, verrouillant la ligne de base strictement à 0 pA.
+**Filtre de Bessel :** Contrairement au Butterworth qui introduit des oscillations ("ringing"), le **filtre de Bessel** possède une réponse en phase linéaire. Il préserve la forme d'onde exacte du sEPSC, une condition absolue pour mesurer le **Rise Time**.
 
 #### 2. Détection par "Template Matching" Multi-Échelle
-Les événements synaptiques provenant des dendrites distales subissent un **filtrage dendritique passif** avant d'atteindre la pipette au soma, ce qui élargit et ralentit leur forme d'onde. 
-Au lieu d'un seul modèle, l'algorithme génère des modèles bi-exponentiels avec différentes constantes de temps de décroissance ($\\tau = 2, 5, 10, 15$ ms). Une corrélation croisée glissante identifie les événements hétérogènes enfouis dans le bruit.
+Les événements dendritiques subissent un **filtrage passif** qui ralentit leur forme d'onde. Au lieu d'un seul modèle, l'algorithme génère des modèles bi-exponentiels avec différentes constantes de temps de décroissance ($\tau = 2, 5, 10, 15$ ms). Une corrélation croisée glissante identifie ces événements hétérogènes.
 
 #### 3. Cinétique : Rise Time 10-90%
-Le temps de montée 10-90% est utilisé pour s'affranchir du bruit au pic absolu et des fluctuations de la ligne de base au départ. L'algorithme utilise une **interpolation linéaire** entre les points d'échantillonnage pour trouver la milliseconde exacte où le signal franchit ces seuils.
+Le temps de montée 10-90% s'affranchit du bruit au pic. L'algorithme utilise une **interpolation linéaire** entre les points d'échantillonnage pour trouver la milliseconde exacte où le signal franchit ces seuils.
 
 #### 4. Estimation du Decay par Intégration de la Charge
-Faire un ajustement de courbe non-linéaire (curve-fitting) sur des centaines de petits événements bruités est lourd et échoue souvent. 
-L'algorithme utilise une approximation mathématique robuste. Si l'on suppose une décroissance exponentielle simple pour un courant AMPA :
-$$ I(t) = I_{max} e^{-t/\\tau} $$
-La charge totale (Aire) est l'intégrale de ce courant :
+Faire un *curve-fitting* sur des événements bruités échoue souvent. En supposant une décroissance exponentielle simple ($I(t) = I_{max} e^{-t/\\tau}$), la charge totale (Aire) est :
 $$ \\text{Aire} = \\int_{0}^{\\infty} I_{max} e^{-t/\\tau} dt = I_{max} \\cdot \\tau $$
-Par conséquent, la constante de temps $\\tau$ peut être estimée très rapidement sans *curve-fitting* :
+La constante de temps $\\tau$ peut donc être estimée robustement :
 $$ \\tau \\approx \\frac{\\text{Aire}}{\\text{Amplitude}} $$
-
-#### 5. Discrimination AMPA / NMDA
-En enregistrant à un potentiel de maintien de **-70 mV**, le blocage par le $Mg^{2+}$ extracellulaire empêche l'ouverture des récepteurs NMDA. Les courants lents résiduels (NMDA ou fortement filtrés par la dendrite) sont éliminés grâce aux filtres cinétiques de **Rise Time (< 0.5 ms)** et de **Decay (< 3.0 ms)**.
 """
 
 T = {
     "English": {
-        "title": "# sEPSC Expert Pipeline: Denoising, Kinetics & Export",
+        "title": "# sEPSC Expert Pipeline: Preprocessing, Kinetics & Export",
         "branding": "Chavis Lab - Biophysics",
         "readme_link": "📖 View README (Documentation)",
         "cite_header": "🎓 Cite this App",
@@ -81,8 +73,11 @@ T = {
         "tab_analysis": "📈 Analysis Pipeline",
         "tab_theory": "📚 Biophysics & Math Theory",
         "theory_text": THEORY_EN,
-        "sb_bessel": "1. Bessel Filter (Denoising)",
-        "cutoff": "Cutoff (Hz)",
+        "sb_preproc": "1. Preprocessing (Baseline & Denoising)",
+        "baseline_method": "Baseline Correction Mode",
+        "dyn_detrend": "Dynamic Detrending (Rolling Median)",
+        "stat_detrend": "Static Global Median",
+        "cutoff": "Bessel Cutoff (Hz)",
         "nyquist_warn": "⚠️ Limited by Nyquist frequency",
         "sb_detec": "2. Multi-Scale Detection",
         "threshold": "Z-Score Threshold",
@@ -93,7 +88,9 @@ T = {
         "amp_filter": "Amplitude Filter (>7pA)",
         "sb_viz": "4. Visualization",
         "zoom_y": "Zoom Y (pA)",
-        "zoom_x": "Zoom X (s)",
+        "zoom_x": "Zoom X Window",
+        "x_start": "Start (s)",
+        "x_end": "End (s)",
         "uploader": "Upload .abf",
         "viz_header": "Visualization & Detection",
         "export_header": "📥 Export Results",
@@ -107,7 +104,7 @@ T = {
         "col_iei": "IEI (ms)"
     },
     "Français": {
-        "title": "# Pipeline Expert sEPSC : Denoising, Cinétique & Exportation",
+        "title": "# Pipeline Expert sEPSC : Prétraitement, Cinétique & Exportation",
         "branding": "Chavis Lab - Biophysique",
         "readme_link": "📖 Voir le README (Documentation)",
         "cite_header": "🎓 Citer cette App",
@@ -115,8 +112,11 @@ T = {
         "tab_analysis": "📈 Pipeline d'Analyse",
         "tab_theory": "📚 Théorie Biophysique & Maths",
         "theory_text": THEORY_FR,
-        "sb_bessel": "1. Filtre Bessel (Denoising)",
-        "cutoff": "Fréquence de coupure (Hz)",
+        "sb_preproc": "1. Prétraitement (Baseline & Denoising)",
+        "baseline_method": "Mode de correction de Ligne de Base",
+        "dyn_detrend": "Detrending Dynamique (Médiane Glissante)",
+        "stat_detrend": "Médiane Globale Statique",
+        "cutoff": "Coupure Bessel (Hz)",
         "nyquist_warn": "⚠️ Limité par la fréquence de Nyquist",
         "sb_detec": "2. Détection Multi-Scale",
         "threshold": "Seuil Z-Score",
@@ -127,7 +127,9 @@ T = {
         "amp_filter": "Filtre Amplitude (>7pA)",
         "sb_viz": "4. Visualisation",
         "zoom_y": "Zoom Y (pA)",
-        "zoom_x": "Zoom X (s)",
+        "zoom_x": "Fenêtre Zoom X",
+        "x_start": "Début (s)",
+        "x_end": "Fin (s)",
         "uploader": "Charger .abf",
         "viz_header": "Visualisation & Détection",
         "export_header": "📥 Exportation des Résultats",
@@ -173,6 +175,13 @@ with tab_theory:
 # ==========================================
 with tab_analysis:
     # --- FONCTIONS MATHÉMATIQUES ---
+    def apply_dynamic_detrending(data, fs, window_ms=500):
+        """Soustrait la dérive lente en utilisant un filtre médian glissant."""
+        kernel_size = int((window_ms / 1000.0) * fs)
+        if kernel_size % 2 == 0: kernel_size += 1 # Le kernel doit être impair
+        baseline = ndimage.median_filter(data, size=kernel_size)
+        return data - baseline
+
     def apply_bessel_filter(data, fs, cutoff=2000, order=4):
         nyquist = 0.5 * fs
         effective_cutoff = min(cutoff, nyquist * 0.95)
@@ -194,8 +203,9 @@ with tab_analysis:
         except: return 0
 
     # --- SIDEBAR & FILTRES ---
-    st.sidebar.header(T["sb_bessel"])
-    use_bessel = st.sidebar.checkbox("Bessel", value=True)
+    st.sidebar.header(T["sb_preproc"])
+    baseline_mode = st.sidebar.radio(T["baseline_method"], [T["dyn_detrend"], T["stat_detrend"]], index=0)
+    use_bessel = st.sidebar.checkbox("Bessel Filter", value=True)
     cutoff = st.sidebar.slider(T["cutoff"], 100, int(st.session_state.fs_nyquist), 2000)
 
     st.sidebar.header(T["sb_detec"])
@@ -213,7 +223,12 @@ with tab_analysis:
 
     st.sidebar.header(T["sb_viz"])
     y_zoom = st.sidebar.slider(T["zoom_y"], -300, 100, (-80, 20))
-    x_zoom = st.sidebar.slider(T["zoom_x"], 0.0, 600.0, (0.0, 2.0), step=0.1)
+    
+    st.sidebar.markdown(f"**{T['zoom_x']}**")
+    col_x1, col_x2 = st.sidebar.columns(2)
+    x_start = col_x1.number_input(T["x_start"], value=10.0, step=0.5)
+    x_end = col_x2.number_input(T["x_end"], value=11.0, step=0.5)
+    x_zoom = (x_start, x_end)
 
     # --- LOGIQUE PRINCIPALE ---
     file = st.file_uploader(T["uploader"], type=["abf"])
@@ -233,7 +248,13 @@ with tab_analysis:
             if cutoff >= nyquist_limit:
                 st.sidebar.warning(T["nyquist_warn"])
 
-            raw_data = abf.sweepY - np.median(abf.sweepY)
+            # POINT CLÉ : Application de la correction de Ligne de Base
+            if baseline_mode == T["dyn_detrend"]:
+                with st.spinner("Application du Detrending Dynamique (Rolling Median)..."):
+                    raw_data = apply_dynamic_detrending(abf.sweepY, fs, window_ms=500)
+            else:
+                raw_data = abf.sweepY - np.median(abf.sweepY)
+
             f_data = apply_bessel_filter(raw_data, fs, cutoff) if use_bessel else raw_data
             
             best_corr = np.zeros_like(f_data)
@@ -254,6 +275,7 @@ with tab_analysis:
                 start, end = p - int(0.003*fs), p + int(0.015*fs)
                 if start < 0 or end >= len(k_trace): continue
                 
+                # La soustraction locale reste pour peaufiner l'intégration
                 l_base = np.mean(k_trace[p-int(0.005*fs):p-int(0.002*fs)])
                 seg_inv = -(k_trace[start:end] - l_base)
                 
@@ -261,7 +283,6 @@ with tab_analysis:
                 rise_1090 = calculate_rise_time_expert(seg_inv, dt)
                 area = integrate.trapezoid(seg_inv, dx=dt)
                 
-                # CORRECTION BIOPHYSIQUE : Valeur absolue pour le decay
                 estimated_decay = abs(area / amp) if amp > 0 else 0
                 
                 pass_amp = (not use_amp_filter or amp >= 7)
@@ -278,7 +299,8 @@ with tab_analysis:
             fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios':[2,1]})
             ax1.plot(times, f_data, color='black', lw=0.4)
             if valid_ev: ax1.plot([e['time'] for e in valid_ev], [f_data[e['idx']] for e in valid_ev], 'o', color='#FF8C00', markersize=5)
-            ax1.set_ylim(y_zoom); ax1.set_xlim(x_zoom)
+            ax1.set_ylim(y_zoom)
+            ax1.set_xlim(x_zoom)
             ax2.plot(times, corr_z, color='blue', alpha=0.5)
             ax2.axhline(threshold, color='red', ls='--')
             st.pyplot(fig1)
@@ -298,23 +320,43 @@ with tab_analysis:
                 col_exp1, col_exp2 = st.columns(2)
                 col_exp1.download_button(label=T["btn_events"], data=df_export.to_csv(index=False).encode('utf-8'), file_name='sEPSC_events.csv', mime='text/csv')
                 
-                st.divider()
-                
-                st.subheader(f"Total Events: {len(valid_ev)} | Freq: {freq_hz:.2f} Hz")
+                # Export de la Population
                 n_bins = 25
-                fig2, (ha, hb, hc) = plt.subplots(1, 3, figsize=(15, 4))
-                
                 counts_amp, bins_amp = np.histogram(df['amp'], bins=n_bins)
+                counts_rise, bins_rise = np.histogram(df['rise'], bins=n_bins)
+                iei_clean = df['iei'].dropna()
+                counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins) if not iei_clean.empty else (np.zeros(n_bins), np.zeros(n_bins+1))
+
+                metrics_keys = ["Total Events", "Frequency (Hz)", "Mean IEI (ms)", "Mean Amp (pA)", "Mean Rise (ms)", "Mean Area (pA.ms)"]
+                metrics_vals = [len(df), freq_hz, mean_iei_ms, df['amp'].mean(), df['rise'].mean(), df['area'].mean()]
+                pad_len = n_bins - len(metrics_keys)
+                metrics_keys += [np.nan] * pad_len
+                metrics_vals += [np.nan] * pad_len
+
+                df_export_summary = pd.DataFrame({
+                    'Metric': metrics_keys,
+                    'Value': metrics_vals,
+                    'Amp_Bin_Center_pA': (bins_amp[:-1] + bins_amp[1:]) / 2,
+                    'Amp_Counts': counts_amp,
+                    'Rise_Bin_Center_ms': (bins_rise[:-1] + bins_rise[1:]) / 2,
+                    'Rise_Counts': counts_rise,
+                    'IEI_Bin_Center_ms': (bins_iei[:-1] + bins_iei[1:]) / 2,
+                    'IEI_Counts': counts_iei
+                })
+
+                col_exp2.download_button(label=T["btn_summary"], data=df_export_summary.to_csv(index=False).encode('utf-8'), file_name='sEPSC_population_analysis.csv', mime='text/csv')
+                
+                st.divider()
+                st.subheader(f"Total Events: {len(valid_ev)} | Freq: {freq_hz:.2f} Hz")
+                
+                fig2, (ha, hb, hc) = plt.subplots(1, 3, figsize=(15, 4))
                 ha.bar((bins_amp[:-1] + bins_amp[1:]) / 2, counts_amp, width=(bins_amp[1]-bins_amp[0])*0.9, color='gray')
                 ha.set_title(T["col_amp"])
                 
-                counts_rise, bins_rise = np.histogram(df['rise'], bins=n_bins)
                 hb.bar((bins_rise[:-1] + bins_rise[1:]) / 2, counts_rise, width=(bins_rise[1]-bins_rise[0])*0.9, color='#FF8C00')
                 hb.set_title(T["col_rise"])
                 
-                iei_clean = df['iei'].dropna()
                 if not iei_clean.empty:
-                    counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins)
                     hc.bar((bins_iei[:-1] + bins_iei[1:]) / 2, counts_iei, width=(bins_iei[1]-bins_iei[0])*0.9, color='salmon')
                     hc.set_title(T["col_iei"])
                     
