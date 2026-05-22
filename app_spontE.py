@@ -76,12 +76,12 @@ lang = st.sidebar.selectbox("Language / Langue", ["Français", "English"])
 T = {
     "Français": {
         "title": "sEPSC : Template Matching Itératif",
-        "subtitle": "Double passe avec recentrage biologique (Snapping) et Template Scaling.",
+        "subtitle": "Double passe avec recentrage biologique et extraction du courant et de la charge synaptique.",
         "readme": "📖 Lire le README",
         "math_title": "🔬 Méthodologie & Rigueur Biophysique",
         "math_text": """
-        * **Filtres de Bessel (Ordre 4) :** Préserve l'intégrité absolue des temps de montée (Rise Time) sans *ringing* artificiel.
-        * **Template Matching Itératif :** Extrait l'amplitude par mise à l'échelle d'un modèle (Least Squares), filtrant naturellement le bruit stochastique qui surestime les événements classiques.
+        * **Filtres de Bessel (Ordre 4) :** Préserve l'intégrité absolue des temps de montée sans *ringing* artificiel.
+        * **Template Scaling & Charge (fC) :** Extrait l'amplitude et la charge (aire sous la courbe) par mise à l'échelle d'un modèle (Least Squares), filtrant naturellement le bruit stochastique qui surestime les événements classiques.
         * **Snapping Biologique :** Corrige le décalage de phase asymétrique pour aligner l'empreinte cellulaire sur le véritable pic physiologique.
         """,
         "sb_1": "1. Prétraitement",
@@ -92,7 +92,7 @@ T = {
         "sb_2": "2. Seuil de Détection",
         "zscore": "Seuil Z-Score (Robuste)",
         "sb_3": "3. Filtres Tier 1 (Empreinte)",
-        "tier1_cap": "Sert à construire l'empreinte cellulaire. Soyez strict ici.",
+        "tier1_cap": "Sert à construire l'empreinte cellulaire.",
         "filt_amp": "Filtrer Amplitude",
         "min_amp": "Amplitude Min (pA)",
         "filt_rise": "Filtrer Rise Time",
@@ -114,18 +114,19 @@ T = {
         "stat_glob": "Statistiques Globales",
         "freq": "Fréquence",
         "mean_amp": "Amplitude Moyenne (Scaled)",
+        "mean_charge": "Charge Moyenne (pA·ms / fC)",
         "mean_rise": "Rise Time Moyen",
         "export_title": "💾 Exportation des Données (CSV)",
-        "export_wait": "Les boutons de téléchargement CSV apparaîtront ici une fois le fichier analysé."
+        "export_wait": "Les boutons de téléchargement CSV apparaîtront ici."
     },
     "English": {
         "title": "sEPSC: Iterative Template Matching",
-        "subtitle": "Double pass with biological snapping and Template Scaling.",
+        "subtitle": "Double pass with biological snapping and extraction of current and synaptic charge.",
         "readme": "📖 Read the README",
         "math_title": "🔬 Methodology & Biophysical Rigor",
         "math_text": """
         * **Bessel Filters (4th Order):** Preserves absolute integrity of Rise Times without artifactual ringing.
-        * **Iterative Template Matching:** Extracts amplitude via Least Squares Template Scaling, inherently filtering stochastic noise that overestimates classic peak detection.
+        * **Template Scaling & Charge (fC):** Extracts amplitude and charge (area under curve) via Least Squares Template Scaling, inherently filtering stochastic noise.
         * **Biological Snapping:** Corrects asymmetric phase shift to perfectly align the cell fingerprint to the true physiological peak.
         """,
         "sb_1": "1. Preprocessing",
@@ -136,7 +137,7 @@ T = {
         "sb_2": "2. Detection Threshold",
         "zscore": "Robust Z-Score Threshold",
         "sb_3": "3. Tier 1 Filters (Fingerprint)",
-        "tier1_cap": "Builds the cell fingerprint. Be strict here.",
+        "tier1_cap": "Builds the cell fingerprint.",
         "filt_amp": "Filter Amplitude",
         "min_amp": "Min Amplitude (pA)",
         "filt_rise": "Filter Rise Time",
@@ -158,9 +159,10 @@ T = {
         "stat_glob": "Global Statistics",
         "freq": "Frequency",
         "mean_amp": "Mean Amplitude (Scaled)",
+        "mean_charge": "Mean Charge (pA·ms / fC)",
         "mean_rise": "Mean Rise Time",
         "export_title": "💾 Data Export (CSV)",
-        "export_wait": "CSV download buttons will appear here once the file is analyzed."
+        "export_wait": "CSV download buttons will appear here."
     }
 }[lang]
 
@@ -172,13 +174,11 @@ with col_title:
     st.title(f"🟢 {T['title']}")
     st.markdown(f"*{T['subtitle']}*")
 
-# --- BANDEAU DOCUMENTATION & CITATION ---
 st.info(f"**DOI:** [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19915015.svg)](https://doi.org/10.5281/zenodo.19915015) | **GitHub:** [{T['readme']}](https://github.com/OliManzoni/Manzoni_Chavis_Lab_Ephys_Suite/blob/main/README.md)")
 with st.expander(T["math_title"]):
     st.markdown(T["math_text"])
 st.divider()
 
-# --- SIDEBAR DYNAMIQUE ---
 st.sidebar.header(T["sb_1"])
 baseline_mode = st.sidebar.radio(T["baseline"], [T["dyn"], T["stat"]], index=0)
 use_bessel = st.sidebar.checkbox("Bessel Filter", value=True)
@@ -207,10 +207,8 @@ col_x1.number_input(T["start"], step=0.1, key="x_start")
 col_x2.number_input(T["end"], step=0.1, key="x_end")
 x_zoom = (st.session_state.x_start, st.session_state.x_end)
 
-# --- ANALYSE ---
 file = st.file_uploader(T["up_btn"], type=["abf"])
 
-# Zone d'export affichée par défaut pour rassurer l'utilisateur
 export_container = st.container()
 
 if file:
@@ -238,7 +236,6 @@ if file:
 
         detect_trace = -f_data 
         
-        # PASSE 1 
         best_corr_base = np.zeros_like(detect_trace)
         default_decays = [2.0, 5.0, 10.0, 15.0]
         
@@ -250,7 +247,6 @@ if file:
             
         corr_z_base = robust_z_score(best_corr_base)
         peaks_base_corr, _ = signal.find_peaks(corr_z_base, height=threshold, distance=int(0.005 * fs))
-        
         peaks_base = get_true_peaks(peaks_base_corr, detect_trace, search_window=int(0.010 * fs), fs=fs)
         
         valid_ev_base = []
@@ -267,26 +263,29 @@ if file:
             
             amp = seg[window_pre] 
             rise_1090 = calculate_rise_time_expert(seg, dt)
-            area = integrate.trapezoid(seg, dx=dt)
-            estimated_decay = abs(area / amp) if amp > 0 else 0
             
             pass_amp = (not use_amp_filter or amp >= amp_limit)
             pass_rise = (not use_rise_filter or rise_1090 <= rise_limit)
             
             if pass_amp and pass_rise:
-                ev = {'idx': p, 'time': times[p], 'amp_peak': amp, 'rise': rise_1090, 'area': abs(area), 'decay': estimated_decay}
+                ev = {'idx': p, 'time': times[p], 'amp_peak': amp, 'rise': rise_1090}
                 ev['iei'] = (times[p] - times[peaks_base[i-1]])*1000 if len(valid_ev_base)>0 else np.nan
                 valid_ev_base.append(ev)
                 extracted_waveforms.append(seg)
 
-        # PASSE 2 (ITÉRATIVE)
+        # --- PASSE 2 (ITÉRATIVE) ---
         valid_ev_iter = []
         
         if len(extracted_waveforms) > 5:
             avg_waveform = np.median(extracted_waveforms, axis=0)
             avg_waveform -= np.mean(avg_waveform[:int(0.002*fs)])
             avg_waveform = np.clip(avg_waveform, 0, None)
-            if np.max(avg_waveform) > 0: avg_waveform /= np.max(avg_waveform) 
+            
+            if np.max(avg_waveform) > 0: 
+                avg_waveform /= np.max(avg_waveform) 
+            
+            # CALCUL DE L'AIRE DU MODÈLE PARFAIT (Pour la Charge Scaled)
+            template_area = integrate.trapezoid(avg_waveform, dx=dt)
             
             corr_iter = signal.correlate(detect_trace, avg_waveform, mode='same')
             corr_z_iter = robust_z_score(corr_iter)
@@ -303,15 +302,22 @@ if file:
                 
                 scale_factor = np.dot(seg, avg_waveform) / (np.dot(avg_waveform, avg_waveform) + 1e-9)
                 amp_scaled = scale_factor 
-                amp_peak = seg[window_pre]
+                
+                # LE CALCUL EXPERT DE LA CHARGE SYNAPTIQUE (immunisé au bruit)
+                charge_scaled = amp_scaled * template_area
+                
                 rise_1090 = calculate_rise_time_expert(seg, dt)
                 
                 if (not use_amp_filter or amp_scaled >= (amp_limit * 0.75)): 
-                    ev = {'idx': p, 'time': times[p], 'amp_scaled': amp_scaled, 'amp_peak': amp_peak, 'rise': rise_1090}
+                    ev = {
+                        'idx': p, 'time': times[p], 
+                        'amp_scaled': amp_scaled, 
+                        'charge_scaled': charge_scaled, 
+                        'rise': rise_1090
+                    }
                     ev['iei'] = (times[p] - times[peaks_iter[i-1]])*1000 if len(valid_ev_iter)>0 else np.nan
                     valid_ev_iter.append(ev)
 
-            # PLOTTING
             st.success(T["msg_p2"].format(len(valid_ev_base), len(valid_ev_iter)))
                 
             col_graph1, col_graph2 = st.columns([3, 1])
@@ -351,7 +357,6 @@ if file:
         else:
             st.error(T["err_p1"])
 
-        # EXPORT & HISTOGRAMMES
         if len(valid_ev_iter) > 0:
             df_iter = pd.DataFrame(valid_ev_iter)
             st.divider()
@@ -359,22 +364,24 @@ if file:
             freq_hz = len(df_iter) / times[-1]
             st.subheader(f"{T['stat_glob']} | n={len(valid_ev_iter)}")
             
-            c1, c2, c3 = st.columns(3)
+            # Affichage de 4 métriques dont la Charge
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric(T["freq"], f"{freq_hz:.2f} Hz")
             c2.metric(T["mean_amp"], f"{df_iter['amp_scaled'].mean():.2f} pA")
-            c3.metric(T["mean_rise"], f"{df_iter['rise'].mean():.2f} ms")
+            c3.metric(T["mean_charge"], f"{df_iter['charge_scaled'].mean():.2f}")
+            c4.metric(T["mean_rise"], f"{df_iter['rise'].mean():.2f} ms")
             
-            # Injection des boutons dans le conteneur du haut pour plus de visibilité
             with export_container:
                 st.subheader(T["export_title"])
                 col_exp1, col_exp2, col_exp3 = st.columns(3)
                 
                 df_base = pd.DataFrame(valid_ev_base)
-                csv_base = df_base[['time', 'amp_peak', 'rise', 'decay', 'area', 'iei']].to_csv(index=False).encode('utf-8')
+                csv_base = df_base.to_csv(index=False).encode('utf-8')
                 col_exp1.download_button(label="📁 CSV - Base (Tier 1)", data=csv_base, file_name='sEPSC_Base.csv', mime='text/csv')
 
-                csv_iter = df_iter[['time', 'amp_scaled', 'amp_peak', 'rise', 'iei']].to_csv(index=False).encode('utf-8')
-                col_exp2.download_button(label="📁 CSV - Iterative (Tier 2)", data=csv_iter, file_name='sEPSC_Iterative.csv', mime='text/csv')
+                # Le fichier final contient l'amplitude et la charge Scaled
+                csv_iter = df_iter[['time', 'amp_scaled', 'charge_scaled', 'rise', 'iei']].to_csv(index=False).encode('utf-8')
+                col_exp2.download_button(label="📁 CSV - Iterative (Tier 2)", data=csv_iter, file_name='sEPSC_Iterative_Results.csv', mime='text/csv')
                 
                 n_bins = 25
                 counts_amp, bins_amp = np.histogram(df_iter['amp_scaled'], bins=n_bins)
@@ -390,7 +397,6 @@ if file:
                 csv_summary = df_export_summary.to_csv(index=False).encode('utf-8')
                 col_exp3.download_button(label="📊 CSV - Distributions", data=csv_summary, file_name='sEPSC_distributions.csv', mime='text/csv')
 
-            # Affichage des Graphiques
             fig2, (ha, hb, hc) = plt.subplots(1, 3, figsize=(15, 4))
             ha.bar((bins_amp[:-1] + bins_amp[1:]) / 2, counts_amp, width=(bins_amp[1]-bins_amp[0])*0.9, color='gray')
             ha.set_title("Amplitude Scaled (pA)")
@@ -407,7 +413,6 @@ if file:
         if os.path.exists(tmp_path): os.remove(tmp_path)
 
 else:
-    # Message d'attente pour l'export si aucun fichier n'est chargé
     with export_container:
         st.subheader(T["export_title"])
         st.info(T["export_wait"])
