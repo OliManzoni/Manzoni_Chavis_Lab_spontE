@@ -77,6 +77,13 @@ T = {
     "Français": {
         "title": "sEPSC : Template Matching Itératif",
         "subtitle": "Double passe avec recentrage biologique (Snapping) et Template Scaling.",
+        "readme": "📖 Lire le README",
+        "math_title": "🔬 Méthodologie & Rigueur Biophysique",
+        "math_text": """
+        * **Filtres de Bessel (Ordre 4) :** Préserve l'intégrité absolue des temps de montée (Rise Time) sans *ringing* artificiel.
+        * **Template Matching Itératif :** Extrait l'amplitude par mise à l'échelle d'un modèle (Least Squares), filtrant naturellement le bruit stochastique qui surestime les événements classiques.
+        * **Snapping Biologique :** Corrige le décalage de phase asymétrique pour aligner l'empreinte cellulaire sur le véritable pic physiologique.
+        """,
         "sb_1": "1. Prétraitement",
         "baseline": "Ligne de base",
         "dyn": "Detrending Dynamique",
@@ -108,10 +115,19 @@ T = {
         "freq": "Fréquence",
         "mean_amp": "Amplitude Moyenne (Scaled)",
         "mean_rise": "Rise Time Moyen",
+        "export_title": "💾 Exportation des Données (CSV)",
+        "export_wait": "Les boutons de téléchargement CSV apparaîtront ici une fois le fichier analysé."
     },
     "English": {
         "title": "sEPSC: Iterative Template Matching",
         "subtitle": "Double pass with biological snapping and Template Scaling.",
+        "readme": "📖 Read the README",
+        "math_title": "🔬 Methodology & Biophysical Rigor",
+        "math_text": """
+        * **Bessel Filters (4th Order):** Preserves absolute integrity of Rise Times without artifactual ringing.
+        * **Iterative Template Matching:** Extracts amplitude via Least Squares Template Scaling, inherently filtering stochastic noise that overestimates classic peak detection.
+        * **Biological Snapping:** Corrects asymmetric phase shift to perfectly align the cell fingerprint to the true physiological peak.
+        """,
         "sb_1": "1. Preprocessing",
         "baseline": "Baseline Mode",
         "dyn": "Dynamic Detrending",
@@ -143,6 +159,8 @@ T = {
         "freq": "Frequency",
         "mean_amp": "Mean Amplitude (Scaled)",
         "mean_rise": "Mean Rise Time",
+        "export_title": "💾 Data Export (CSV)",
+        "export_wait": "CSV download buttons will appear here once the file is analyzed."
     }
 }[lang]
 
@@ -153,6 +171,11 @@ with col_logo:
 with col_title:
     st.title(f"🟢 {T['title']}")
     st.markdown(f"*{T['subtitle']}*")
+
+# --- BANDEAU DOCUMENTATION & CITATION ---
+st.info(f"**DOI:** [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19915015.svg)](https://doi.org/10.5281/zenodo.19915015) | **GitHub:** [{T['readme']}](https://github.com/OliManzoni/Manzoni_Chavis_Lab_Ephys_Suite/blob/main/README.md)")
+with st.expander(T["math_title"]):
+    st.markdown(T["math_text"])
 st.divider()
 
 # --- SIDEBAR DYNAMIQUE ---
@@ -186,6 +209,9 @@ x_zoom = (st.session_state.x_start, st.session_state.x_end)
 
 # --- ANALYSE ---
 file = st.file_uploader(T["up_btn"], type=["abf"])
+
+# Zone d'export affichée par défaut pour rassurer l'utilisateur
+export_container = st.container()
 
 if file:
     with tempfile.NamedTemporaryFile(delete=False, suffix='.abf') as tmp:
@@ -338,29 +364,33 @@ if file:
             c2.metric(T["mean_amp"], f"{df_iter['amp_scaled'].mean():.2f} pA")
             c3.metric(T["mean_rise"], f"{df_iter['rise'].mean():.2f} ms")
             
-            col_exp1, col_exp2, col_exp3 = st.columns(3)
-            
-            df_base = pd.DataFrame(valid_ev_base)
-            csv_base = df_base[['time', 'amp_peak', 'rise', 'decay', 'area', 'iei']].to_csv(index=False).encode('utf-8')
-            col_exp1.download_button(label="📁 CSV - Base (Tier 1)", data=csv_base, file_name='sEPSC_Base.csv', mime='text/csv')
+            # Injection des boutons dans le conteneur du haut pour plus de visibilité
+            with export_container:
+                st.subheader(T["export_title"])
+                col_exp1, col_exp2, col_exp3 = st.columns(3)
+                
+                df_base = pd.DataFrame(valid_ev_base)
+                csv_base = df_base[['time', 'amp_peak', 'rise', 'decay', 'area', 'iei']].to_csv(index=False).encode('utf-8')
+                col_exp1.download_button(label="📁 CSV - Base (Tier 1)", data=csv_base, file_name='sEPSC_Base.csv', mime='text/csv')
 
-            csv_iter = df_iter[['time', 'amp_scaled', 'amp_peak', 'rise', 'iei']].to_csv(index=False).encode('utf-8')
-            col_exp2.download_button(label="📁 CSV - Iterative (Tier 2)", data=csv_iter, file_name='sEPSC_Iterative.csv', mime='text/csv')
-            
-            n_bins = 25
-            counts_amp, bins_amp = np.histogram(df_iter['amp_scaled'], bins=n_bins)
-            counts_rise, bins_rise = np.histogram(df_iter['rise'], bins=n_bins)
-            iei_clean = df_iter['iei'].dropna()
-            counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins) if not iei_clean.empty else (np.zeros(n_bins), np.zeros(n_bins+1))
+                csv_iter = df_iter[['time', 'amp_scaled', 'amp_peak', 'rise', 'iei']].to_csv(index=False).encode('utf-8')
+                col_exp2.download_button(label="📁 CSV - Iterative (Tier 2)", data=csv_iter, file_name='sEPSC_Iterative.csv', mime='text/csv')
+                
+                n_bins = 25
+                counts_amp, bins_amp = np.histogram(df_iter['amp_scaled'], bins=n_bins)
+                counts_rise, bins_rise = np.histogram(df_iter['rise'], bins=n_bins)
+                iei_clean = df_iter['iei'].dropna()
+                counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins) if not iei_clean.empty else (np.zeros(n_bins), np.zeros(n_bins+1))
 
-            df_export_summary = pd.DataFrame({
-                'Amp_Bin_Center_pA': (bins_amp[:-1] + bins_amp[1:]) / 2, 'Amp_Counts': counts_amp,
-                'Rise_Bin_Center_ms': (bins_rise[:-1] + bins_rise[1:]) / 2, 'Rise_Counts': counts_rise,
-                'IEI_Bin_Center_ms': (bins_iei[:-1] + bins_iei[1:]) / 2, 'IEI_Counts': counts_iei
-            })
-            csv_summary = df_export_summary.to_csv(index=False).encode('utf-8')
-            col_exp3.download_button(label="📊 CSV - Distributions", data=csv_summary, file_name='sEPSC_distributions.csv', mime='text/csv')
+                df_export_summary = pd.DataFrame({
+                    'Amp_Bin_Center_pA': (bins_amp[:-1] + bins_amp[1:]) / 2, 'Amp_Counts': counts_amp,
+                    'Rise_Bin_Center_ms': (bins_rise[:-1] + bins_rise[1:]) / 2, 'Rise_Counts': counts_rise,
+                    'IEI_Bin_Center_ms': (bins_iei[:-1] + bins_iei[1:]) / 2, 'IEI_Counts': counts_iei
+                })
+                csv_summary = df_export_summary.to_csv(index=False).encode('utf-8')
+                col_exp3.download_button(label="📊 CSV - Distributions", data=csv_summary, file_name='sEPSC_distributions.csv', mime='text/csv')
 
+            # Affichage des Graphiques
             fig2, (ha, hb, hc) = plt.subplots(1, 3, figsize=(15, 4))
             ha.bar((bins_amp[:-1] + bins_amp[1:]) / 2, counts_amp, width=(bins_amp[1]-bins_amp[0])*0.9, color='gray')
             ha.set_title("Amplitude Scaled (pA)")
@@ -375,3 +405,9 @@ if file:
         st.error(f"Error: {e}")
     finally:
         if os.path.exists(tmp_path): os.remove(tmp_path)
+
+else:
+    # Message d'attente pour l'export si aucun fichier n'est chargé
+    with export_container:
+        st.subheader(T["export_title"])
+        st.info(T["export_wait"])
