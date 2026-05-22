@@ -14,7 +14,6 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Manzoni Lab sEPSC Pipeline", layout="wide")
 
-# --- RÉSOLUTION SÉCURISÉE DU CHEMIN DU LOGO ---
 root_dir = os.path.dirname(os.path.abspath(__file__))
 if os.path.basename(root_dir) == "pages":
     root_dir = os.path.dirname(root_dir)
@@ -27,7 +26,7 @@ if 'x_start' not in st.session_state:
 if 'x_end' not in st.session_state:
     st.session_state.x_end = 11.0
 
-# --- FONCTIONS UTILES ---
+# --- FONCTIONS MATHÉMATIQUES EXPERTES ---
 def scroll_left():
     window = st.session_state.x_end - st.session_state.x_start
     shift = window * 0.8
@@ -42,106 +41,37 @@ def scroll_right():
     st.session_state.x_end += shift
 
 def robust_z_score(sig):
-    """Calcule un Z-score robuste basé sur la Median Absolute Deviation (MAD).
-    Immunise la détection contre les énormes artefacts isolés."""
+    """Z-score insensible aux très grands artefacts isolés."""
     med = np.median(sig)
     mad = np.median(np.abs(sig - med))
     if mad == 0:
         return (sig - np.mean(sig)) / (np.std(sig) + 1e-9)
     return (sig - med) / (1.4826 * mad)
 
-# --- LANGUAGE SELECTION ---
-lang = st.sidebar.selectbox("Language / Langue", ["English", "Français"])
-
-T = {
-    "English": {
-        "title": "sEPSC: Iterative Template Matching",
-        "subtitle": "Double pass with cell fingerprinting and amplitude estimation via Template Scaling.",
-        "sb_preproc": "1. Preprocessing (AMPA)",
-        "baseline_method": "Baseline Mode",
-        "dyn_detrend": "Dynamic Detrending (Median)",
-        "stat_detrend": "Static Global Median",
-        "cutoff": "Bessel Cutoff (Hz)",
-        "sb_detec": "2. Detection Threshold",
-        "threshold": "Z-Score Threshold",
-        "sb_kinetics": "3. Base Filters (Tier 1)",
-        "decay_thresh": "Max Decay (ms)",
-        "rise_thresh": "Max Rise Time (ms)",
-        "amp_filter": "Min Absolute Amplitude (pA)",
-        "sb_viz": "4. Visualization & Navigation",
-        "zoom_y": "Zoom Y (pA)",
-        "x_start": "Start (s)",
-        "x_end": "End (s)",
-        "auto_z": "Auto-scale Z-score axis",
-        "viz_header": "Visualization & Detection",
-        "btn_left": "⬅️ Left",
-        "btn_right": "Right ➡️"
-    },
-    "Français": {
-        "title": "sEPSC : Template Matching Itératif",
-        "subtitle": "Double passe avec création d'empreinte cellulaire et estimation d'amplitude par Template Scaling.",
-        "sb_preproc": "1. Prétraitement (AMPA)",
-        "baseline_method": "Mode de Ligne de Base",
-        "dyn_detrend": "Detrending Dynamique (Médiane)",
-        "stat_detrend": "Médiane Globale Statique",
-        "cutoff": "Coupure Bessel (Hz)",
-        "sb_detec": "2. Seuil de Détection",
-        "threshold": "Seuil Z-Score (Robuste)",
-        "sb_kinetics": "3. Filtres de Base (Tier 1)",
-        "decay_thresh": "Decay Max (ms)",
-        "rise_thresh": "Rise Time Max (ms)",
-        "amp_filter": "Amplitude Absolue Min (pA)",
-        "sb_viz": "4. Visualisation & Navigation",
-        "zoom_y": "Zoom Y (pA)",
-        "x_start": "Début (s)",
-        "x_end": "Fin (s)",
-        "auto_z": "Auto-ajustement axe Z",
-        "viz_header": "Visualisation & Détection",
-        "btn_left": "⬅️ Gauche",
-        "btn_right": "Droite ➡️"
-    }
-}[lang]
-
-# --- EN-TÊTE ---
-col_logo, col_title = st.columns([1, 4])
-with col_logo:
-    if os.path.exists(logo_path): st.image(logo_path, width=150)
-    else: st.write("🟢")
-with col_title:
-    st.title(f"🟢 {T['title']}")
-    st.markdown(f"*{T['subtitle']}*")
-st.divider()
-
-# --- SIDEBAR ---
-st.sidebar.header(T["sb_preproc"])
-baseline_mode = st.sidebar.radio(T["baseline_method"], [T["dyn_detrend"], T["stat_detrend"]], index=0)
-use_bessel = st.sidebar.checkbox("Bessel Filter", value=True)
-cutoff = st.sidebar.slider(T["cutoff"], 100, int(st.session_state.fs_nyquist), 2000)
-
-st.sidebar.header(T["sb_detec"])
-threshold = st.sidebar.slider(T["threshold"], 1.0, 8.0, 2.5)
-
-st.sidebar.header(T["sb_kinetics"])
-st.sidebar.caption("Filtres Tier 1 pour l'empreinte. Le filtre Decay est désactivé par défaut.")
-use_amp_filter = st.sidebar.checkbox("Filter Amplitude", value=True)
-amp_limit = st.sidebar.number_input(T["amp_filter"], min_value=0.0, value=7.0, step=1.0)
-use_decay_filter = st.sidebar.checkbox("Filter Decay", value=False)
-decay_limit = st.sidebar.number_input(T["decay_thresh"], value=25.0, step=0.5)
-use_rise_filter = st.sidebar.checkbox("Filter Rise Time", value=True)
-rise_limit = st.sidebar.number_input(T["rise_thresh"], value=5.0, step=0.1)
-
-st.sidebar.header(T["sb_viz"])
-y_zoom = st.sidebar.slider(T["zoom_y"], -300, 100, (-80, 20))
-auto_z = st.sidebar.checkbox(T["auto_z"], value=True)
-
-st.sidebar.markdown("**Navigation Temporelle X (s)**")
-col_b1, col_b2 = st.sidebar.columns(2)
-col_b1.button(T["btn_left"], on_click=scroll_left, use_container_width=True)
-col_b2.button(T["btn_right"], on_click=scroll_right, use_container_width=True)
-col_x1, col_x2 = st.sidebar.columns(2)
-col_x1.number_input(T["x_start"], step=0.1, key="x_start")
-col_x2.number_input(T["x_end"], step=0.1, key="x_end")
-x_zoom = (st.session_state.x_start, st.session_state.x_end)
+def get_true_peaks(corr_peaks, detect_trace, search_window, fs):
+    """
+    CORRECTION MAJEURE : Snapping Biologique.
+    La corrélation a un décalage de phase. Cette fonction utilise les index de corrélation 
+    pour chercher le véritable pic biologique local dans le signal lissé.
+    """
+    if len(corr_peaks) == 0: return []
+    true_peaks = []
+    for cp in corr_peaks:
+        start_search = max(0, cp - search_window)
+        end_search = min(len(detect_trace), cp + search_window)
+        
+        # Trouve le vrai pic (maximum) dans cette petite fenêtre
+        local_max_idx = start_search + np.argmax(detect_trace[start_search:end_search])
+        true_peaks.append(local_max_idx)
+        
+    # Élimine les doublons si deux pics de corrélation convergent vers le même pic biologique
+    true_peaks = sorted(list(set(true_peaks)))
+    filtered_peaks = [true_peaks[0]]
+    for p in true_peaks[1:]:
+        if p - filtered_peaks[-1] > int(0.002 * fs): # Période réfractaire 2ms
+            filtered_peaks.append(p)
+            
+    return filtered_peaks
 
 def calculate_rise_time_expert(segment_y, dt):
     try:
@@ -155,6 +85,55 @@ def calculate_rise_time_expert(segment_y, dt):
         t90 = np.interp(y90, rising_limb, t_vec)
         return t90 - t10
     except: return 0
+
+# --- INTERFACE ---
+lang = st.sidebar.selectbox("Language / Langue", ["Français", "English"])
+T = {
+    "Français": {
+        "title": "sEPSC : Template Matching Itératif",
+        "subtitle": "Double passe avec recentrage biologique (Snapping) et Template Scaling.",
+    },
+    "English": {
+        "title": "sEPSC: Iterative Template Matching",
+        "subtitle": "Double pass with biological peak snapping and Template Scaling.",
+    }
+}[lang]
+
+col_logo, col_title = st.columns([1, 4])
+with col_logo:
+    if os.path.exists(logo_path): st.image(logo_path, width=150)
+    else: st.write("🟢")
+with col_title:
+    st.title(f"🟢 {T['title']}")
+    st.markdown(f"*{T['subtitle']}*")
+st.divider()
+
+st.sidebar.header("1. Prétraitement (AMPA)")
+baseline_mode = st.sidebar.radio("Ligne de base", ["Detrending Dynamique (Médiane)", "Médiane Globale Statique"], index=0)
+use_bessel = st.sidebar.checkbox("Bessel Filter", value=True)
+cutoff = st.sidebar.slider("Coupure Bessel (Hz)", 100, int(st.session_state.fs_nyquist), 2000)
+
+st.sidebar.header("2. Seuil de Détection")
+threshold = st.sidebar.slider("Seuil Z-Score (Robuste)", 1.0, 8.0, 3.0)
+
+st.sidebar.header("3. Filtres de Base (Tier 1)")
+st.sidebar.caption("Sert à construire l'empreinte cellulaire. Soyez assez strict ici.")
+use_amp_filter = st.sidebar.checkbox("Filtrer Amplitude", value=True)
+amp_limit = st.sidebar.number_input("Amplitude Min (pA)", min_value=0.0, value=10.0, step=1.0)
+use_rise_filter = st.sidebar.checkbox("Filtrer Rise Time", value=True)
+rise_limit = st.sidebar.number_input("Rise Time Max (ms)", value=4.0, step=0.1)
+
+st.sidebar.header("4. Visualisation")
+y_zoom = st.sidebar.slider("Zoom Y (pA)", -300, 100, (-80, 20))
+auto_z = st.sidebar.checkbox("Auto-ajustement axe Z", value=True)
+
+col_b1, col_b2 = st.sidebar.columns(2)
+col_b1.button("⬅️ Gauche", on_click=scroll_left, use_container_width=True)
+col_b2.button("Droite ➡️", on_click=scroll_right, use_container_width=True)
+col_x1, col_x2 = st.sidebar.columns(2)
+col_x1.number_input("Début (s)", step=0.1, key="x_start")
+col_x2.number_input("Fin (s)", step=0.1, key="x_end")
+x_zoom = (st.session_state.x_start, st.session_state.x_end)
 
 # --- ANALYSE ---
 file = st.file_uploader("Charger .abf / Upload .abf", type=["abf"])
@@ -170,7 +149,7 @@ if file:
         fs, times, dt = abf.dataRate, abf.sweepX, 1000/abf.dataRate
         st.session_state.fs_nyquist = fs / 2
 
-        if baseline_mode == T["dyn_detrend"]:
+        if baseline_mode == "Detrending Dynamique (Médiane)":
             raw_data = ndimage.median_filter(abf.sweepY, size=int(0.5 * fs))
             raw_data = abf.sweepY - raw_data
         else:
@@ -182,7 +161,7 @@ if file:
             b, a = signal.bessel(4, cutoff/nyq, btype='low', analog=False)
             f_data = signal.filtfilt(b, a, raw_data)
 
-        detect_trace = -f_data # Inversion pour EPSC
+        detect_trace = -f_data # Inversion (Inward EPSC -> Pics positifs)
         
         # ==========================================
         # PASSE 1 : MATHEMATICAL TEMPLATE (BASE)
@@ -196,9 +175,11 @@ if file:
             tmpl /= np.max(np.abs(tmpl))
             best_corr_base = np.maximum(best_corr_base, signal.correlate(detect_trace, tmpl, mode='same'))
             
-        # Z-SCORE ROBUSTE !
         corr_z_base = robust_z_score(best_corr_base)
-        peaks_base, _ = signal.find_peaks(corr_z_base, height=threshold, distance=int(0.005 * fs))
+        peaks_base_corr, _ = signal.find_peaks(corr_z_base, height=threshold, distance=int(0.005 * fs))
+        
+        # SNAP BIOLOGIQUE (Réalignement)
+        peaks_base = get_true_peaks(peaks_base_corr, detect_trace, search_window=int(0.010 * fs), fs=fs)
         
         valid_ev_base = []
         window_pre = int(0.005 * fs)
@@ -212,44 +193,43 @@ if file:
             l_base = np.mean(f_data[p-window_pre:p-int(0.002*fs)])
             seg = -(f_data[start:end] - l_base)
             
-            amp = np.max(seg)
+            amp = seg[window_pre] # Le vrai pic est exactement à window_pre grâce au snapping !
             rise_1090 = calculate_rise_time_expert(seg, dt)
             area = integrate.trapezoid(seg, dx=dt)
             estimated_decay = abs(area / amp) if amp > 0 else 0
             
             pass_amp = (not use_amp_filter or amp >= amp_limit)
-            pass_decay = (not use_decay_filter or estimated_decay <= decay_limit)
             pass_rise = (not use_rise_filter or rise_1090 <= rise_limit)
             
-            if pass_amp and pass_decay and pass_rise:
+            if pass_amp and pass_rise:
                 ev = {'idx': p, 'time': times[p], 'amp_peak': amp, 'rise': rise_1090, 'area': abs(area), 'decay': estimated_decay}
                 ev['iei'] = (times[p] - times[peaks_base[i-1]])*1000 if len(valid_ev_base)>0 else np.nan
                 valid_ev_base.append(ev)
                 extracted_waveforms.append(seg)
 
         # ==========================================
-        # CREATION DE L'EMPREINTE CELLULAIRE & PASSE 2
+        # CREATION DE L'EMPREINTE & PASSE 2 (ITÉRATIVE)
         # ==========================================
         valid_ev_iter = []
         
         if len(extracted_waveforms) > 5:
-            # FIX 1 : MÉDIANE au lieu de Moyenne (Élimine les artefacts extrêmes)
+            # Empreinte par Médiane Parfaite (Puisque tous les pics sont alignés au centre)
             avg_waveform = np.median(extracted_waveforms, axis=0)
-            
-            # FIX 2 : Correction stricte de la ligne de base
             avg_waveform -= np.mean(avg_waveform[:int(0.002*fs)])
-            avg_waveform = np.clip(avg_waveform, 0, None) # Évite les rebonds négatifs absurdes
+            avg_waveform = np.clip(avg_waveform, 0, None)
             
-            # FIX 3 : Léger lissage pour parfaire le modèle et normalisation
-            avg_waveform = ndimage.gaussian_filter1d(avg_waveform, sigma=1)
+            # Normalisation
             if np.max(avg_waveform) > 0:
                 avg_waveform /= np.max(avg_waveform) 
             
-            # PASSE 2 avec Z-SCORE ROBUSTE
+            # PASSE 2
             corr_iter = signal.correlate(detect_trace, avg_waveform, mode='same')
             corr_z_iter = robust_z_score(corr_iter)
             
-            peaks_iter, _ = signal.find_peaks(corr_z_iter, height=threshold, distance=int(0.005 * fs))
+            peaks_iter_corr, _ = signal.find_peaks(corr_z_iter, height=threshold, distance=int(0.005 * fs))
+            
+            # SNAP BIOLOGIQUE POUR LA PASSE 2
+            peaks_iter = get_true_peaks(peaks_iter_corr, detect_trace, search_window=int(0.010 * fs), fs=fs)
             
             for i, p in enumerate(peaks_iter):
                 start, end = p - window_pre, p + window_post
@@ -258,31 +238,30 @@ if file:
                 l_base = np.mean(f_data[p-window_pre:p-int(0.002*fs)])
                 seg = -(f_data[start:end] - l_base)
                 
-                # TEMPLATE SCALING
+                # TEMPLATE SCALING MATH
                 scale_factor = np.dot(seg, avg_waveform) / (np.dot(avg_waveform, avg_waveform) + 1e-9)
                 amp_scaled = scale_factor 
-                amp_peak = np.max(seg) 
+                amp_peak = seg[window_pre]
                 
                 rise_1090 = calculate_rise_time_expert(seg, dt)
                 
-                if (not use_amp_filter or amp_scaled >= amp_limit):
+                # En passe 2, on récupère tout ce qui matche, sans filtre strict sur le Rise Time
+                if (not use_amp_filter or amp_scaled >= (amp_limit * 0.75)): # Tolérance pour les minis distaux
                     ev = {'idx': p, 'time': times[p], 'amp_scaled': amp_scaled, 'amp_peak': amp_peak, 'rise': rise_1090}
                     ev['iei'] = (times[p] - times[peaks_iter[i-1]])*1000 if len(valid_ev_iter)>0 else np.nan
                     valid_ev_iter.append(ev)
 
             # --- PLOTTING ---
-            if len(valid_ev_iter) > 0:
-                st.success(f"**Passe 2 réussie !** {len(valid_ev_base)} événements de base ont généré l'empreinte, permettant de valider **{len(valid_ev_iter)} événements itératifs**.")
-            else:
-                st.warning("La passe itérative n'a trouvé aucun événement avec ce seuil.")
+            st.success(f"**Analyse Réussie !** Empreinte créée avec {len(valid_ev_base)} EPSC parfaits. **{len(valid_ev_iter)} EPSC totaux détectés.**")
                 
             col_graph1, col_graph2 = st.columns([3, 1])
             
             with col_graph1:
-                st.subheader(T["viz_header"])
+                st.subheader("Trace & Détections Itératives")
                 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios':[2,1]})
                 
                 ax1.plot(times, f_data, color='black', lw=0.5)
+                # Les points orange marquent les événements finaux de la Passe 2
                 ax1.plot([e['time'] for e in valid_ev_iter], [f_data[e['idx']] for e in valid_ev_iter], 'o', color='#FF8C00', markersize=5, label='Iterative Hits')
                 ax1.set_ylim(y_zoom)
                 ax1.set_xlim(x_zoom)
@@ -303,44 +282,41 @@ if file:
                 st.pyplot(fig)
 
             with col_graph2:
-                st.subheader("Cell Fingerprint")
+                st.subheader("Empreinte (Aligned)")
                 fig_avg, ax_avg = plt.subplots(figsize=(4, 6))
                 t_avg = np.arange(len(avg_waveform)) * dt
                 ax_avg.plot(t_avg, -avg_waveform, color='red', lw=2)
-                ax_avg.set_title(f"Médiane (n={len(extracted_waveforms)})")
+                ax_avg.set_title(f"Médiane Alignée (n={len(extracted_waveforms)})")
                 ax_avg.set_xlabel("Temps (ms)")
-                ax_avg.set_ylabel("Amplitude normalisée")
+                ax_avg.set_ylabel("Normalisé")
                 ax_avg.grid(True, alpha=0.3)
                 st.pyplot(fig_avg)
 
         else:
-            st.warning("Pas assez d'événements clairs (<5) pour générer l'empreinte cellulaire (Passe 1). Baissez le seuil Z-Score ou relâchez les filtres de base.")
+            st.error("Pas assez d'événements clairs (<5) en Passe 1. Baissez le Seuil Z-Score ou relâchez le filtre d'Amplitude/Rise Time.")
 
-        # --- EXPORT & POPULATION ANALYSIS (Sécurisé pour toujours s'afficher) ---
+        # --- EXPORT & HISTOGRAMMES ---
         if len(valid_ev_iter) > 0:
             df_iter = pd.DataFrame(valid_ev_iter)
             st.divider()
             
             freq_hz = len(df_iter) / times[-1]
+            st.subheader(f"Statistiques Globales | {len(valid_ev_iter)} Événements")
             
-            st.subheader(f"Statistiques Globales (Itératif) | {len(valid_ev_iter)} Événements")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Fréquence Moyenne", f"{freq_hz:.2f} Hz")
-            c2.metric("Amplitude (Scaled) Moyenne", f"{df_iter['amp_scaled'].mean():.2f} pA")
+            c1.metric("Fréquence", f"{freq_hz:.2f} Hz")
+            c2.metric("Amplitude Moyenne (Scaled)", f"{df_iter['amp_scaled'].mean():.2f} pA")
             c3.metric("Rise Time Moyen", f"{df_iter['rise'].mean():.2f} ms")
             
             col_exp1, col_exp2, col_exp3 = st.columns(3)
             
-            # Export Base (Pour comparaison)
             df_base = pd.DataFrame(valid_ev_base)
             csv_base = df_base[['time', 'amp_peak', 'rise', 'decay', 'area', 'iei']].to_csv(index=False).encode('utf-8')
-            col_exp1.download_button(label="📁 Download Base (CSV)", data=csv_base, file_name='sEPSC_Base.csv', mime='text/csv')
+            col_exp1.download_button(label="📁 CSV - Base (Passe 1)", data=csv_base, file_name='sEPSC_Base.csv', mime='text/csv')
 
-            # Export Itératif
             csv_iter = df_iter[['time', 'amp_scaled', 'amp_peak', 'rise', 'iei']].to_csv(index=False).encode('utf-8')
-            col_exp2.download_button(label="📁 Download Iterative (CSV)", data=csv_iter, file_name='sEPSC_Iterative.csv', mime='text/csv')
+            col_exp2.download_button(label="📁 CSV - Itératif (Passe 2)", data=csv_iter, file_name='sEPSC_Iterative.csv', mime='text/csv')
             
-            # Distributions (Basées sur l'Itératif et l'Amplitude Scaled)
             n_bins = 25
             counts_amp, bins_amp = np.histogram(df_iter['amp_scaled'], bins=n_bins)
             counts_rise, bins_rise = np.histogram(df_iter['rise'], bins=n_bins)
@@ -348,29 +324,21 @@ if file:
             counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins) if not iei_clean.empty else (np.zeros(n_bins), np.zeros(n_bins+1))
 
             df_export_summary = pd.DataFrame({
-                'Amp_Bin_Center_pA': (bins_amp[:-1] + bins_amp[1:]) / 2,
-                'Amp_Counts': counts_amp,
-                'Rise_Bin_Center_ms': (bins_rise[:-1] + bins_rise[1:]) / 2,
-                'Rise_Counts': counts_rise,
-                'IEI_Bin_Center_ms': (bins_iei[:-1] + bins_iei[1:]) / 2,
-                'IEI_Counts': counts_iei
+                'Amp_Bin_Center_pA': (bins_amp[:-1] + bins_amp[1:]) / 2, 'Amp_Counts': counts_amp,
+                'Rise_Bin_Center_ms': (bins_rise[:-1] + bins_rise[1:]) / 2, 'Rise_Counts': counts_rise,
+                'IEI_Bin_Center_ms': (bins_iei[:-1] + bins_iei[1:]) / 2, 'IEI_Counts': counts_iei
             })
-
             csv_summary = df_export_summary.to_csv(index=False).encode('utf-8')
-            col_exp3.download_button(label="📊 Download Distributions (CSV)", data=csv_summary, file_name='sEPSC_distributions.csv', mime='text/csv')
+            col_exp3.download_button(label="📊 CSV - Distributions", data=csv_summary, file_name='sEPSC_distributions.csv', mime='text/csv')
 
-            # Figures des Distributions
             fig2, (ha, hb, hc) = plt.subplots(1, 3, figsize=(15, 4))
             ha.bar((bins_amp[:-1] + bins_amp[1:]) / 2, counts_amp, width=(bins_amp[1]-bins_amp[0])*0.9, color='gray')
             ha.set_title("Amplitude Scaled (pA)")
-            
             hb.bar((bins_rise[:-1] + bins_rise[1:]) / 2, counts_rise, width=(bins_rise[1]-bins_rise[0])*0.9, color='#FF8C00')
             hb.set_title("Rise Time 10-90% (ms)")
-            
             if not iei_clean.empty:
                 hc.bar((bins_iei[:-1] + bins_iei[1:]) / 2, counts_iei, width=(bins_iei[1]-bins_iei[0])*0.9, color='salmon')
                 hc.set_title("IEI (ms)")
-            
             st.pyplot(fig2)
 
     except Exception as e: 
