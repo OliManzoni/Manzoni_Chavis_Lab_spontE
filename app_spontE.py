@@ -71,18 +71,21 @@ def calculate_rise_time_expert(segment_y, dt):
         return t90 - t10
     except: return 0
 
-# --- TRADUCTION DE L'INTERFACE ---
+# --- TRADUCTION DE L'INTERFACE & BLOC PÉDAGOGIQUE ---
 lang = st.sidebar.selectbox("Language / Langue", ["Français", "English"])
 T = {
     "Français": {
         "title": "sEPSC : Template Matching Itératif",
         "subtitle": "Double passe avec recentrage biologique et extraction du courant et de la charge synaptique.",
         "readme": "📖 Lire le README",
-        "math_title": "🔬 Méthodologie & Rigueur Biophysique",
+        "math_title": "🔬 Résumé Pédagogique : Détection Itérative des sEPSC",
         "math_text": """
-        * **Filtres de Bessel (Ordre 4) :** Préserve l'intégrité absolue des temps de montée sans *ringing* artificiel.
-        * **Template Scaling & Charge (fC) :** Extrait l'amplitude et la charge (aire sous la courbe) par mise à l'échelle d'un modèle (Least Squares), filtrant naturellement le bruit stochastique qui surestime les événements classiques.
-        * **Snapping Biologique :** Corrige le décalage de phase asymétrique pour aligner l'empreinte cellulaire sur le véritable pic physiologique.
+Ce pipeline utilise une méthode avancée en deux passes (*Iterative Template Matching*) pour extraire les courants AMPA avec une précision immunisée au bruit.
+
+* **1. Création de l'Empreinte (Tier 1) :** L'algorithme repère d'abord les événements les plus évidents (haut rapport signal/bruit). Il les aligne parfaitement (*Biological Snapping*) et les moyenne pour créer une "empreinte" (Template) unique et parfaite, spécifique à la cellule enregistrée.
+* **2. Passe Itérative & Détection :** Cette empreinte glisse ensuite sur toute la trace. En utilisant un Z-Score robuste, l'algorithme détecte les événements réels même s'ils sont enfouis dans le bruit électrique de fond.
+* **3. Extraction de l'Amplitude et de la Charge (Scaled) :** Plutôt que de lire bêtement la hauteur du pic brut (qui est souvent faussée par le bruit aléatoire en patch-clamp), l'algorithme "met à l'échelle" l'empreinte parfaite pour qu'elle épouse l'événement (*Least Squares Scaling*). Cela permet de calculer une **Amplitude exacte** et une **Charge synaptique** (fC, aire sous la courbe) représentant fidèlement le nombre de récepteurs activés.
+* **4. Filtrage Dendritique :** Le calcul du *Rise Time* (10-90%) par interpolation permet d'estimer la localisation de la synapse. Un temps de montée allongé trahit une atténuation du signal le long des dendrites.
         """,
         "sb_1": "1. Prétraitement",
         "baseline": "Ligne de base",
@@ -123,11 +126,14 @@ T = {
         "title": "sEPSC: Iterative Template Matching",
         "subtitle": "Double pass with biological snapping and extraction of current and synaptic charge.",
         "readme": "📖 Read the README",
-        "math_title": "🔬 Methodology & Biophysical Rigor",
+        "math_title": "🔬 Pedagogical Summary: Iterative sEPSC Detection",
         "math_text": """
-        * **Bessel Filters (4th Order):** Preserves absolute integrity of Rise Times without artifactual ringing.
-        * **Template Scaling & Charge (fC):** Extracts amplitude and charge (area under curve) via Least Squares Template Scaling, inherently filtering stochastic noise.
-        * **Biological Snapping:** Corrects asymmetric phase shift to perfectly align the cell fingerprint to the true physiological peak.
+This pipeline uses an advanced two-pass method (*Iterative Template Matching*) to extract AMPA currents with noise-immune precision.
+
+* **1. Fingerprint Creation (Tier 1):** The algorithm first locates the most obvious events (high signal-to-noise ratio). It aligns them perfectly (*Biological Snapping*) and averages them to create a noise-free "fingerprint" (Template) specific to the recorded cell.
+* **2. Iterative Pass & Detection:** This fingerprint then slides across the entire trace. Using a robust Z-Score, the algorithm detects real events even if they are buried in background electrical noise.
+* **3. Scaled Amplitude & Charge Extraction:** Instead of blindly reading the raw peak height (which is heavily distorted by stochastic noise in patch-clamp), the algorithm scales the perfect fingerprint to optimally fit the event (*Least Squares Scaling*). This yields a true **Amplitude** and **Synaptic Charge** (fC, area under the curve) that accurately reflects the number of activated receptors.
+* **4. Dendritic Filtering:** The interpolated *Rise Time* (10-90%) calculation estimates synapse location. A prolonged rise time reveals signal attenuation along the dendritic tree.
         """,
         "sb_1": "1. Preprocessing",
         "baseline": "Baseline Mode",
@@ -175,6 +181,7 @@ with col_title:
     st.markdown(f"*{T['subtitle']}*")
 
 st.info(f"**DOI:** [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19915015.svg)](https://doi.org/10.5281/zenodo.19915015) | **GitHub:** [{T['readme']}](https://github.com/OliManzoni/Manzoni_Chavis_Lab_Ephys_Suite/blob/main/README.md)")
+
 with st.expander(T["math_title"]):
     st.markdown(T["math_text"])
 st.divider()
