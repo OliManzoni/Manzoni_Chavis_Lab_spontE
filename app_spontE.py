@@ -212,7 +212,6 @@ use_rise_filter = st.sidebar.checkbox(T["filt_rise"], value=True)
 rise_limit = st.sidebar.number_input(T["max_rise"], value=4.0, step=0.1)
 
 st.sidebar.header(T["sb_4"])
-# Amplitude agrandie au cas où pour les très gros sEPSC
 y_zoom = st.sidebar.slider(T["zoom"], -1000, 200, (-80, 20))
 auto_z = st.sidebar.checkbox(T["autoz"], value=True)
 
@@ -229,6 +228,8 @@ if st.session_state.x_start >= st.session_state.x_end:
     st.session_state.x_end = st.session_state.x_start + 1.0
 x_zoom = (st.session_state.x_start, st.session_state.x_end)
 
+# FIX 1 : export_container défini AVANT le bloc if/else pour éviter un NameError
+# au démarrage à froid (quand aucun fichier n'est encore chargé).
 export_container = st.container()
 
 # =========================================================================
@@ -237,12 +238,12 @@ export_container = st.container()
 if file:
     current_analysis_params = {
         'file_name': file.name, 'baseline_mode': baseline_mode, 'use_bessel': use_bessel,
-        'cutoff': st.session_state.cutoff_val, 'threshold': threshold, 
-        'use_amp_filter': use_amp_filter, 'amp_limit': amp_limit, 
+        'cutoff': st.session_state.cutoff_val, 'threshold': threshold,
+        'use_amp_filter': use_amp_filter, 'amp_limit': amp_limit,
         'use_rise_filter': use_rise_filter, 'rise_limit': rise_limit
     }
-    
-    need_recomputation = (st.session_state.analysis_results is None or 
+
+    need_recomputation = (st.session_state.analysis_results is None or
                           st.session_state.last_analysis_params != current_analysis_params)
 
     if need_recomputation:
@@ -254,7 +255,9 @@ if file:
             try:
                 abf = pyabf.ABF(tmp_path)
                 abf.setSweep(0)
-                fs, times, dt = abf.dataRate, abf.sweepX, 1000/abf.dataRate
+                # dt in milliseconds — consistent with rise time display (ms) and
+                # charge units (pA·ms = fC). Template time axis is also in ms.
+                fs, times, dt = abf.dataRate, abf.sweepX, 1000 / abf.dataRate
 
                 if baseline_mode == T["dyn"]:
                     raw_data = ndimage.median_filter(abf.sweepY, size=int(0.5 * fs))
@@ -265,21 +268,21 @@ if file:
                 f_data = raw_data
                 if use_bessel:
                     nyq = 0.5 * fs
-                    b, a = signal.bessel(4, st.session_state.cutoff_val/nyq, btype='low', analog=False)
+                    b, a = signal.bessel(4, st.session_state.cutoff_val / nyq, btype='low', analog=False)
                     f_data = signal.filtfilt(b, a, raw_data)
 
-                detect_trace = -f_data 
+                detect_trace = -f_data
                 best_corr_base = np.zeros_like(detect_trace)
                 for d in [2.0, 5.0, 10.0, 15.0]:
                     t_tmpl = np.arange(0, 20, dt)
-                    tmpl = (np.exp(-t_tmpl/d) - np.exp(-t_tmpl/0.5)) 
+                    tmpl = (np.exp(-t_tmpl / d) - np.exp(-t_tmpl / 0.5))
                     tmpl /= np.max(np.abs(tmpl))
                     best_corr_base = np.maximum(best_corr_base, signal.correlate(detect_trace, tmpl, mode='same'))
-                    
+
                 corr_z_base = robust_z_score(best_corr_base)
                 peaks_base_corr, _ = signal.find_peaks(corr_z_base, height=threshold, distance=int(0.005 * fs))
                 peaks_base = get_true_peaks(peaks_base_corr, detect_trace, search_window=int(0.010 * fs), fs=fs)
-                
+
                 valid_ev_base = []
                 window_pre = int(0.005 * fs)
                 window_post = int(0.025 * fs)
@@ -288,54 +291,60 @@ if file:
                 for i, p in enumerate(peaks_base):
                     start, end = p - window_pre, p + window_post
                     if start < 0 or end >= len(f_data): continue
-                    
-                    l_base = np.mean(f_data[p-window_pre:p-int(0.002*fs)])
+
+                    l_base = np.mean(f_data[p - window_pre:p - int(0.002 * fs)])
                     seg = -(f_data[start:end] - l_base)
-                    amp = seg[window_pre] 
+                    # FIX 2a : use np.max(seg) instead of seg[window_pre] for robustness
+                    # against slight peak misalignment under noise.
+                    amp = np.max(seg)
                     rise_1090 = calculate_rise_time_expert(seg, dt)
-                    
+
                     if (not use_amp_filter or amp >= amp_limit) and (not use_rise_filter or rise_1090 <= rise_limit):
                         ev = {'idx': p, 'time': times[p], 'amp_peak': amp, 'rise': rise_1090}
-                        ev['iei'] = (times[p] - times[peaks_base[i-1]])*1000 if len(valid_ev_base)>0 else np.nan
+                        # FIX 2b : IEI computed against last *accepted* event, not last
+                        # candidate peak (which may have been rejected by the filters).
+                        ev['iei'] = (times[p] - valid_ev_base[-1]['time']) * 1000 if len(valid_ev_base) > 0 else np.nan
                         valid_ev_base.append(ev)
                         extracted_waveforms.append(seg)
 
                 # --- PASSE 2 ---
                 valid_ev_iter = []
                 avg_waveform = np.array([])
+                corr_z_iter = None
                 has_waveforms = len(extracted_waveforms) > 5
-                
+
                 if has_waveforms:
                     avg_waveform = np.median(extracted_waveforms, axis=0)
-                    avg_waveform -= np.mean(avg_waveform[:int(0.002*fs)])
+                    avg_waveform -= np.mean(avg_waveform[:int(0.002 * fs)])
                     avg_waveform = np.clip(avg_waveform, 0, None)
-                    if np.max(avg_waveform) > 0: avg_waveform /= np.max(avg_waveform) 
-                    
+                    if np.max(avg_waveform) > 0: avg_waveform /= np.max(avg_waveform)
+
                     template_area = integrate.trapezoid(avg_waveform, dx=dt)
                     corr_iter = signal.correlate(detect_trace, avg_waveform, mode='same')
                     corr_z_iter = robust_z_score(corr_iter)
-                    
+
                     peaks_iter_corr, _ = signal.find_peaks(corr_z_iter, height=threshold, distance=int(0.005 * fs))
                     peaks_iter = get_true_peaks(peaks_iter_corr, detect_trace, search_window=int(0.010 * fs), fs=fs)
-                    
+
                     for i, p in enumerate(peaks_iter):
                         start, end = p - window_pre, p + window_post
                         if start < 0 or end >= len(f_data): continue
-                        
-                        l_base = np.mean(f_data[p-window_pre:p-int(0.002*fs)])
+
+                        l_base = np.mean(f_data[p - window_pre:p - int(0.002 * fs)])
                         seg = -(f_data[start:end] - l_base)
                         scale_factor = np.dot(seg, avg_waveform) / (np.dot(avg_waveform, avg_waveform) + 1e-9)
-                        
-                        if (not use_amp_filter or scale_factor >= (amp_limit * 0.75)): 
-                            ev = {'idx': p, 'time': times[p], 'amp_scaled': scale_factor, 
-                                  'charge_scaled': scale_factor * template_area, 
+
+                        if (not use_amp_filter or scale_factor >= (amp_limit * 0.75)):
+                            ev = {'idx': p, 'time': times[p], 'amp_scaled': scale_factor,
+                                  'charge_scaled': scale_factor * template_area,
                                   'rise': calculate_rise_time_expert(seg, dt)}
-                            ev['iei'] = (times[p] - times[peaks_iter[i-1]])*1000 if len(valid_ev_iter)>0 else np.nan
+                            # FIX 2c : IEI against last *accepted* iterative event
+                            ev['iei'] = (times[p] - valid_ev_iter[-1]['time']) * 1000 if len(valid_ev_iter) > 0 else np.nan
                             valid_ev_iter.append(ev)
 
                 st.session_state.analysis_results = {
                     'has_waveforms': has_waveforms, 'times': times, 'f_data': f_data,
-                    'corr_z_iter': corr_z_iter if has_waveforms else None,
+                    'corr_z_iter': corr_z_iter,
                     'valid_ev_iter': valid_ev_iter, 'valid_ev_base': valid_ev_base,
                     'avg_waveform': avg_waveform, 'dt': dt,
                     'msg': T["msg_p2"].format(len(valid_ev_base), len(valid_ev_iter)) if has_waveforms else T["err_p1"]
@@ -357,8 +366,8 @@ if file:
             col_graph1, col_graph2 = st.columns([3, 1])
             with col_graph1:
                 st.subheader(T["viz_tr"])
-                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios':[2,1]})
-                
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+
                 ax1.plot(res['times'], res['f_data'], color='black', lw=0.5)
                 ax1.plot([e['time'] for e in res['valid_ev_iter']], [res['f_data'][e['idx']] for e in res['valid_ev_iter']], 'o', color='#FF8C00', markersize=5)
                 ax1.set_ylim(y_zoom)
@@ -369,7 +378,7 @@ if file:
                 ax2.axhline(threshold, color='red', ls='--')
                 ax2.set_ylabel("Robust Z-Score")
                 ax2.set_xlim(x_zoom)
-                
+
                 if auto_z:
                     mask = (res['times'] >= st.session_state.x_start) & (res['times'] <= st.session_state.x_end)
                     if np.any(mask):
@@ -378,7 +387,7 @@ if file:
                         margin = abs(z_max - z_min) * 0.15 if z_max != z_min else 1.0
                         ax2.set_ylim(z_min - margin, z_max + margin)
                 st.pyplot(fig)
-                plt.close(fig) # SÉCURITÉ : Empêche la fuite de mémoire RAM
+                plt.close(fig)  # SÉCURITÉ : Empêche la fuite de mémoire RAM
 
             with col_graph2:
                 st.subheader(T["fp"])
@@ -386,7 +395,7 @@ if file:
                 t_avg = np.arange(len(res['avg_waveform'])) * res['dt']
                 ax_avg.plot(t_avg, -res['avg_waveform'], color='red', lw=2)
                 ax_avg.set_title(f"n={len(res['valid_ev_base'])}")
-                ax_avg.set_xlabel("Time (ms)" if lang=="English" else "Temps (ms)")
+                ax_avg.set_xlabel("Time (ms)" if lang == "English" else "Temps (ms)")
                 ax_avg.set_ylabel(T["norm"])
                 ax_avg.grid(True, alpha=0.3)
                 st.pyplot(fig_avg)
@@ -397,32 +406,34 @@ if file:
         if len(res['valid_ev_iter']) > 0:
             df_iter = pd.DataFrame(res['valid_ev_iter'])
             st.divider()
-            
-            freq_hz = len(df_iter) / res['times'][-1]
+
+            # Frequency and all statistics computed over the whole recording duration
+            recording_duration_s = res['times'][-1]
+            freq_hz = len(df_iter) / recording_duration_s
             st.subheader(f"{T['stat_glob']} | n={len(df_iter)}")
-            
+
             c1, c2, c3, c4 = st.columns(4)
             c1.metric(T["freq"], f"{freq_hz:.2f} Hz")
             c2.metric(T["mean_amp"], f"{df_iter['amp_scaled'].mean():.2f} pA")
             c3.metric(T["mean_charge"], f"{df_iter['charge_scaled'].mean():.2f}")
             c4.metric(T["mean_rise"], f"{df_iter['rise'].mean():.2f} ms")
-            
+
             with export_container:
                 st.subheader(T["export_title"])
                 col_exp1, col_exp2, col_exp3 = st.columns(3)
-                
+
                 df_base = pd.DataFrame(res['valid_ev_base'])
                 csv_base = df_base.to_csv(index=False).encode('utf-8')
                 col_exp1.download_button(label="📁 CSV - Base (Tier 1)", data=csv_base, file_name='sEPSC_Base.csv', mime='text/csv')
 
                 csv_iter = df_iter[['time', 'amp_scaled', 'charge_scaled', 'rise', 'iei']].to_csv(index=False).encode('utf-8')
                 col_exp2.download_button(label="📁 CSV - Iterative (Tier 2)", data=csv_iter, file_name='sEPSC_Iterative_Results.csv', mime='text/csv')
-                
+
                 n_bins = 25
                 counts_amp, bins_amp = np.histogram(df_iter['amp_scaled'], bins=n_bins)
                 counts_rise, bins_rise = np.histogram(df_iter['rise'], bins=n_bins)
                 iei_clean = df_iter['iei'].dropna()
-                counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins) if not iei_clean.empty else (np.zeros(n_bins), np.zeros(n_bins+1))
+                counts_iei, bins_iei = np.histogram(iei_clean, bins=n_bins) if not iei_clean.empty else (np.zeros(n_bins), np.zeros(n_bins + 1))
 
                 df_export_summary = pd.DataFrame({
                     'Amp_Bin_Center_pA': (bins_amp[:-1] + bins_amp[1:]) / 2, 'Amp_Counts': counts_amp,
@@ -433,12 +444,12 @@ if file:
                 col_exp3.download_button(label="📊 CSV - Distributions", data=csv_summary, file_name='sEPSC_distributions.csv', mime='text/csv')
 
             fig2, (ha, hb, hc) = plt.subplots(1, 3, figsize=(15, 4))
-            ha.bar((bins_amp[:-1] + bins_amp[1:]) / 2, counts_amp, width=(bins_amp[1]-bins_amp[0])*0.9, color='gray')
+            ha.bar((bins_amp[:-1] + bins_amp[1:]) / 2, counts_amp, width=(bins_amp[1] - bins_amp[0]) * 0.9, color='gray')
             ha.set_title("Amplitude Scaled (pA)")
-            hb.bar((bins_rise[:-1] + bins_rise[1:]) / 2, counts_rise, width=(bins_rise[1]-bins_rise[0])*0.9, color='#FF8C00')
+            hb.bar((bins_rise[:-1] + bins_rise[1:]) / 2, counts_rise, width=(bins_rise[1] - bins_rise[0]) * 0.9, color='#FF8C00')
             hb.set_title("Rise Time 10-90% (ms)")
             if not iei_clean.empty:
-                hc.bar((bins_iei[:-1] + bins_iei[1:]) / 2, counts_iei, width=(bins_iei[1]-bins_iei[0])*0.9, color='salmon')
+                hc.bar((bins_iei[:-1] + bins_iei[1:]) / 2, counts_iei, width=(bins_iei[1] - bins_iei[0]) * 0.9, color='salmon')
                 hc.set_title("IEI (ms)")
             st.pyplot(fig2)
             plt.close(fig2)
