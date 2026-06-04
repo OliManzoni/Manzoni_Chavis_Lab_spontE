@@ -1,16 +1,3 @@
-Vous avez eu un excellent réflexe. En relisant attentivement la fusion de mes deux précédents correctifs, **vous avez raison, il y avait une faille critique.** Dans mon empressement à corriger la surcharge du zoom (mon 2ème code), **j'avais accidentellement supprimé la sécurité "anti-crash" du slider de Nyquist que je vous avais donnée dans mon 1er code !** Conséquence : si vous changiez de fichier avec un taux d'échantillonnage plus bas, l'application aurait à nouveau planté exactement comme avant.
-
-De plus, en analysant la mécanique des curseurs, j'ai repéré un autre crash potentiel avec matplotlib : si vous rentrez manuellement un temps de "Début" supérieur au temps de "Fin", matplotlib lève une erreur `ValueError` qui ferait planter l'interface.
-
-J'ai donc consolidé le tout. Voici les **3 sécurités définitives** intégrées :
-
-1. **Cache Algorithmique** : Le zoom Y est 100% fluide, il ne relance plus l'analyse (corrigé).
-2. **Garde-fou du Slider Nyquist** : Remis en place ! Le filtre s'adapte dynamiquement sans erreur de valeur hors-limite.
-3. **Sécurité Temporelle (Nouveau)** : Empêche le plantage si $X_{start} \ge X_{end}$.
-
-Voici le code "Bulletproof" (blindé), vérifié ligne par ligne :
-
-```python
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
