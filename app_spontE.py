@@ -447,5 +447,3 @@ else:
     with export_container:
         st.subheader(T["export_title"])
         st.info(T["export_wait"])
-
-```
